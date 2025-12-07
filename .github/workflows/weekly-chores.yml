@@ -8,6 +8,7 @@ on:
 jobs:
   create-chores:
     runs-on: ubuntu-latest
+    environment: roomies
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,19 +21,6 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-
-      - name: Verify secrets are set
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          CHORES_DATABASE_ID: ${{ secrets.CHORES_DATABASE_ID }}
-          ROOMIES_DATABASE_ID: ${{ secrets.ROOMIES_DATABASE_ID }}
-          TODOS_DATABASE_ID: ${{ secrets.TODOS_DATABASE_ID }}
-        run: |
-          if [ -z "$NOTION_TOKEN" ]; then echo "ERROR: NOTION_TOKEN is not set"; exit 1; fi
-          if [ -z "$CHORES_DATABASE_ID" ]; then echo "ERROR: CHORES_DATABASE_ID is not set"; exit 1; fi
-          if [ -z "$ROOMIES_DATABASE_ID" ]; then echo "ERROR: ROOMIES_DATABASE_ID is not set"; exit 1; fi
-          if [ -z "$TODOS_DATABASE_ID" ]; then echo "ERROR: TODOS_DATABASE_ID is not set"; exit 1; fi
-          echo "✓ All secrets are set"
 
       - name: Run chores automation
         env:
