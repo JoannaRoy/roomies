@@ -41,8 +41,21 @@ CHORE = "chore"
 RESPONSIBLE = "responsible roomie"
 NAME = "name"
 
-if not NOTION_TOKEN or not CHORES_DATABASE_ID:
-    print("Error: NOTION_TOKEN and CHORES_DATABASE_ID must be set")
+missing_vars = []
+if not NOTION_TOKEN:
+    missing_vars.append("NOTION_TOKEN")
+if not CHORES_DATABASE_ID:
+    missing_vars.append("CHORES_DATABASE_ID")
+if not ROOMIES_DATABASE_ID:
+    missing_vars.append("ROOMIES_DATABASE_ID")
+if not TODOS_DATABASE_ID:
+    missing_vars.append("TODOS_DATABASE_ID")
+
+if missing_vars:
+    print(
+        f"Error: The following environment variables are not set: {', '.join(missing_vars)}"
+    )
+    print("In GitHub Actions, make sure these are set as secrets in the workflow.")
     sys.exit(1)
 
 notion = Client(auth=NOTION_TOKEN)
