@@ -1,0 +1,32 @@
+name: Weekly Roomie Chores Automation
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+jobs:
+  create-chores:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run chores automation
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          CHORES_DATABASE_ID: ${{ secrets.CHORES_DATABASE_ID }}
+          ROOMIES_DATABASE_ID: ${{ secrets.ROOMIES_DATABASE_ID }}
+          TODOS_DATABASE_ID: ${{ secrets.TODOS_DATABASE_ID }}
+        run: |
+          python roomie_chores.py
+
