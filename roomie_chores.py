@@ -17,7 +17,7 @@ NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 CHORES_DATABASE_ID = os.getenv("CHORES_DATABASE_ID")
 ROOMIES_DATABASE_ID = os.getenv("ROOMIES_DATABASE_ID")
 TODOS_DATABASE_ID = os.getenv("TODOS_DATABASE_ID")
-START_DATE = "2025-12-07"  # when the chores rotation begins, can rlly be any week
+START_DATE = "2025-12-21"  # when the chores rotation begins, can rlly be any week
 
 
 # notion props
@@ -40,6 +40,8 @@ DUE_DATE = "do by"
 CHORE = "chore"
 RESPONSIBLE = "responsible roomie"
 NAME = "name"
+EVERY_X_WEEKS = "every X weeks"
+NUMBER = "number"
 
 missing_vars = []
 if not NOTION_TOKEN:
@@ -80,48 +82,53 @@ def get_roomies() -> List[Dict[str, Any]]:
     return roomies
 
 
-def get_rooms() -> List[Dict[str, Any]]:
-    """Fetch all room pages from the chores database."""
-    rooms = []
+def get_every_x_weeks(page: Dict[str, Any]) -> int:
+    """Extract the 'every X weeks' value from a task page. Defaults to 1 (every week)."""
+    properties = page.get(PROPERTIES, {})
+    every_x_weeks_prop = properties.get(EVERY_X_WEEKS, {})
+    value = every_x_weeks_prop.get(NUMBER)
+    return value if value and value > 0 else 1
 
-    try:
-        response = notion.databases.query(database_id=CHORES_DATABASE_ID)
 
+def get_tasks() -> List[Dict[str, Any]]:
+    """Fetch all task pages from the chores database."""
+    tasks = []
+
+    response = notion.databases.query(database_id=CHORES_DATABASE_ID)
+
+    for page in response.get("results", []):
+        task_id, task_name, emoji = get_page_properties(page)
+
+        if task_name:
+            tasks.append(
+                {
+                    ID: task_id,
+                    NAME: task_name,
+                    EMOJI: emoji,
+                    CONTENT: get_page_content(task_id),
+                    EVERY_X_WEEKS: get_every_x_weeks(page),
+                }
+            )
+
+    while response.get("has_more"):
+        response = notion.databases.query(
+            database_id=CHORES_DATABASE_ID, start_cursor=response["next_cursor"]
+        )
         for page in response.get("results", []):
-            room_id, room_name, emoji = get_page_properties(page)
+            task_id, task_name, emoji = get_page_properties(page)
 
-            if room_name:
-                rooms.append(
+            if task_name:
+                tasks.append(
                     {
-                        ID: room_id,
-                        NAME: room_name,
+                        ID: task_id,
+                        NAME: task_name,
                         EMOJI: emoji,
-                        CONTENT: get_page_content(room_id),
+                        CONTENT: get_page_content(task_id),
+                        EVERY_X_WEEKS: get_every_x_weeks(page),
                     }
                 )
 
-        while response.get("has_more"):
-            response = notion.databases.query(
-                database_id=CHORES_DATABASE_ID, start_cursor=response["next_cursor"]
-            )
-            for page in response.get("results", []):
-                room_id, room_name, emoji = get_page_properties(page)
-
-                if room_name:
-                    rooms.append(
-                        {
-                            ID: room_id,
-                            NAME: room_name,
-                            EMOJI: emoji,
-                            CONTENT: get_page_content(room_id),
-                        }
-                    )
-
-    except Exception as e:
-        print(f"Error fetching rooms from database: {e}")
-        sys.exit(1)
-
-    return rooms
+    return tasks
 
 
 def get_page_properties(page: Dict[str, Any]) -> Tuple[str, str, str]:
@@ -129,13 +136,13 @@ def get_page_properties(page: Dict[str, Any]) -> Tuple[str, str, str]:
     page_id = page.get(ID, "")
     properties = page.get(PROPERTIES, {})
 
-    room_name = ""
+    task_name = ""
     for prop_data in properties.values():
         prop_type = prop_data.get(TYPE)
         if prop_type == TITLE:
             title_array = prop_data.get(TITLE, [])
             if title_array:
-                room_name = title_array[0].get(TEXT, "")
+                task_name = title_array[0].get(TEXT, "")
                 break
 
     emoji = ""
@@ -143,7 +150,7 @@ def get_page_properties(page: Dict[str, Any]) -> Tuple[str, str, str]:
     if icon and icon.get(TYPE) == EMOJI:
         emoji = icon.get(EMOJI, "")
 
-    return page_id, room_name, emoji
+    return page_id, task_name, emoji
 
 
 def get_page_content(page_id: str) -> List[Dict[str, Any]]:
@@ -173,28 +180,28 @@ def get_page_content(page_id: str) -> List[Dict[str, Any]]:
 
 
 def assign_roomies(
-    rooms: List[Dict[str, Any]], roomies: List[Dict[str, Any]]
+    tasks: List[Dict[str, Any]], roomies: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    """Assign roomies to rooms based on rotation schedule."""
+    """Assign roomies to tasks based on rotation schedule."""
     weeks_from_start = (
         datetime.now() - datetime.strptime(START_DATE, "%Y-%m-%d")
     ).days // 7
 
-    for room_idx, room in enumerate(rooms):
-        idx = (room_idx + weeks_from_start) % len(roomies)
-        room[ASSIGNED] = roomies[idx]
+    for task_idx, task in enumerate(tasks):
+        idx = (task_idx + weeks_from_start) % len(roomies)
+        task[ASSIGNED] = roomies[idx]
 
-    return rooms
+    return tasks
 
 
-def create_weekly_task(room: Dict[str, Any], due_date_str: str) -> bool:
-    """Create a new weekly task for a room."""
+def create_task(task: Dict[str, Any], due_date_str: str) -> bool:
+    """Create a new weekly task for a roomie."""
     properties = {
         NAME: {
             TITLE: [
                 {
                     TEXT: {
-                        "content": f"🧹 {room[ASSIGNED][NAME][CONTENT]}'s chore for {due_date_str}"
+                        "content": f"🧹 {task[ASSIGNED][NAME][CONTENT]}'s chore for {due_date_str}"
                     }
                 }
             ]
@@ -202,14 +209,14 @@ def create_weekly_task(room: Dict[str, Any], due_date_str: str) -> bool:
     }
 
     properties[DUE_DATE] = {DATE: {"start": due_date_str}}
-    properties[RESPONSIBLE] = {RELATION: [{ID: room[ASSIGNED][ID]}]}
-    properties[CHORE] = {RELATION: [{ID: room[ID]}]}
+    properties[RESPONSIBLE] = {RELATION: [{ID: task[ASSIGNED][ID]}]}
+    properties[CHORE] = {RELATION: [{ID: task[ID]}]}
 
     icon = None
-    if room.get(EMOJI):
-        icon = {TYPE: EMOJI, EMOJI: room[EMOJI]}
+    if task.get(EMOJI):
+        icon = {TYPE: EMOJI, EMOJI: task[EMOJI]}
 
-    children = room.get(CONTENT, [])
+    children = task.get(CONTENT, [])
 
     try:
         notion.pages.create(
@@ -219,21 +226,30 @@ def create_weekly_task(room: Dict[str, Any], due_date_str: str) -> bool:
             children=children,
         )
         print(
-            f"✓ Created task in {room[NAME]} for {room[ASSIGNED][NAME]} (due {due_date_str})"
+            f"✓ Created task in {task[NAME]} for {task[ASSIGNED][NAME]} (due {due_date_str})"
         )
         return True
     except Exception as e:
-        print(f"✗ Error creating task for {room[NAME]}: {e}")
+        print(f"✗ Error creating task for {task[NAME]}: {e}")
         return False
 
 
+def get_tasks_for_this_week(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Filter tasks to only include those that should be assigned this week."""
+    weeks_from_start = (
+        datetime.now() - datetime.strptime(START_DATE, "%Y-%m-%d")
+    ).days // 7
+
+    return [task for task in tasks if weeks_from_start % task[EVERY_X_WEEKS] == 0]
+
+
 def main():
-    """Main function to create weekly tasks for all rooms."""
+    """Main function to create weekly tasks for all roomies."""
     print("Starting chores automation...")
 
-    rooms = get_rooms()
-    if not rooms:
-        print("No rooms found in the database.")
+    tasks = get_tasks()
+    if not tasks:
+        print("No tasks found in the database.")
         return
 
     roomies = get_roomies()
@@ -241,17 +257,26 @@ def main():
         print("No roomies found in the database.")
         return
 
-    print(f"Found {len(rooms)} room(s) and {len(roomies)} roomie(s)")
+    print(f"Found {len(tasks)} task(s) and {len(roomies)} roomie(s)")
+
+    tasks_this_week = get_tasks_for_this_week(tasks)
+    print(f"{len(tasks_this_week)} task(s) scheduled for this week")
+
+    if not tasks_this_week:
+        print("No tasks to assign this week.")
+        return
 
     due_date_str = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
     success_count = 0
-    rooms_assigned = assign_roomies(rooms, roomies)
-    for room in rooms_assigned:
-        if create_weekly_task(room, due_date_str):
+    tasks_assigned = assign_roomies(tasks_this_week, roomies)
+    for task in tasks_assigned:
+        if create_task(task, due_date_str):
             success_count += 1
 
-    print(f"\nCompleted: {success_count}/{len(rooms)} tasks created successfully")
+    print(
+        f"\nCompleted: {success_count}/{len(tasks_this_week)} tasks created successfully"
+    )
 
 
 if __name__ == "__main__":
