@@ -96,6 +96,7 @@ def get_rooms() -> List[Dict[str, Any]]:
                         ID: room_id,
                         NAME: room_name,
                         EMOJI: emoji,
+                        CONTENT: get_page_content(room_id),
                     }
                 )
 
@@ -107,7 +108,14 @@ def get_rooms() -> List[Dict[str, Any]]:
                 room_id, room_name, emoji = get_page_properties(page)
 
                 if room_name:
-                    rooms.append({ID: room_id, NAME: room_name, EMOJI: emoji})
+                    rooms.append(
+                        {
+                            ID: room_id,
+                            NAME: room_name,
+                            EMOJI: emoji,
+                            CONTENT: get_page_content(room_id),
+                        }
+                    )
 
     except Exception as e:
         print(f"Error fetching rooms from database: {e}")
@@ -136,6 +144,32 @@ def get_page_properties(page: Dict[str, Any]) -> Tuple[str, str, str]:
         emoji = icon.get(EMOJI, "")
 
     return page_id, room_name, emoji
+
+
+def get_page_content(page_id: str) -> List[Dict[str, Any]]:
+    """Fetch the content blocks from a Notion page."""
+    blocks = []
+    response = notion.blocks.children.list(block_id=page_id)
+
+    for block in response.get("results", []):
+        block_copy = {TYPE: block.get(TYPE)}
+        block_type = block.get(TYPE)
+        if block_type in block:
+            block_copy[block_type] = block[block_type]
+        blocks.append(block_copy)
+
+    while response.get("has_more"):
+        response = notion.blocks.children.list(
+            block_id=page_id, start_cursor=response["next_cursor"]
+        )
+        for block in response.get("results", []):
+            block_copy = {TYPE: block.get(TYPE)}
+            block_type = block.get(TYPE)
+            if block_type in block:
+                block_copy[block_type] = block[block_type]
+            blocks.append(block_copy)
+
+    return blocks
 
 
 def assign_roomies(
@@ -175,11 +209,14 @@ def create_weekly_task(room: Dict[str, Any], due_date_str: str) -> bool:
     if room.get(EMOJI):
         icon = {TYPE: EMOJI, EMOJI: room[EMOJI]}
 
+    children = room.get(CONTENT, [])
+
     try:
         notion.pages.create(
             parent={DATABASE_ID: TODOS_DATABASE_ID},
             properties=properties,
             icon=icon,
+            children=children,
         )
         print(
             f"✓ Created task in {room[NAME]} for {room[ASSIGNED][NAME]} (due {due_date_str})"
