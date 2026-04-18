@@ -34,6 +34,7 @@ PROPERTIES = "properties"
 TEXT = "text"
 ICON = "icon"
 ASSIGNED = "assigned_person"
+STATUS = "status"
 
 # notion columns
 DUE_DATE = "do by"
@@ -42,6 +43,10 @@ RESPONSIBLE = "responsible roomie"
 NAME = "name"
 EVERY_X_WEEKS = "every X weeks"
 NUMBER = "number"
+DONE = "done?"
+
+# column values
+DONE_VALUE = "Done"
 
 missing_vars = []
 if not NOTION_TOKEN:
@@ -153,28 +158,41 @@ def get_page_properties(page: Dict[str, Any]) -> Tuple[str, str, str]:
     return page_id, task_name, emoji
 
 
+def _strip_nones(value: Any) -> Any:
+    """Recursively drop keys whose values are None.
+
+    The Notion read API returns fields like `icon: null` on blocks, but the
+    create API rejects nulls -- those fields must be objects or absent.
+    """
+    if isinstance(value, dict):
+        return {k: _strip_nones(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_strip_nones(v) for v in value]
+    return value
+
+
+def _copy_block(block: Dict[str, Any]) -> Dict[str, Any]:
+    block_type = block.get(TYPE)
+    block_copy: Dict[str, Any] = {TYPE: block_type}
+    if block_type and block_type in block:
+        block_copy[block_type] = _strip_nones(block[block_type])
+    return block_copy
+
+
 def get_page_content(page_id: str) -> List[Dict[str, Any]]:
     """Fetch the content blocks from a Notion page."""
     blocks = []
     response = notion.blocks.children.list(block_id=page_id)
 
     for block in response.get("results", []):
-        block_copy = {TYPE: block.get(TYPE)}
-        block_type = block.get(TYPE)
-        if block_type in block:
-            block_copy[block_type] = block[block_type]
-        blocks.append(block_copy)
+        blocks.append(_copy_block(block))
 
     while response.get("has_more"):
         response = notion.blocks.children.list(
             block_id=page_id, start_cursor=response["next_cursor"]
         )
         for block in response.get("results", []):
-            block_copy = {TYPE: block.get(TYPE)}
-            block_type = block.get(TYPE)
-            if block_type in block:
-                block_copy[block_type] = block[block_type]
-            blocks.append(block_copy)
+            blocks.append(_copy_block(block))
 
     return blocks
 
@@ -234,6 +252,44 @@ def create_task(task: Dict[str, Any], due_date_str: str) -> bool:
         return False
 
 
+def get_open_chore_ids() -> set:
+    """Return chore IDs that still have an incomplete task in the todos database.
+
+    Any chore whose previous todo is not marked 'Done' should be skipped this
+    week so a duplicate task isn't created for it.
+    """
+    open_chore_ids = set()
+    filter_payload = {
+        "property": DONE,
+        STATUS: {"does_not_equal": DONE_VALUE},
+    }
+
+    def collect(results: List[Dict[str, Any]]) -> None:
+        for page in results:
+            chore_relation = (
+                page.get(PROPERTIES, {}).get(CHORE, {}).get(RELATION, [])
+            )
+            for rel in chore_relation:
+                rel_id = rel.get(ID)
+                if rel_id:
+                    open_chore_ids.add(rel_id)
+
+    response = notion.databases.query(
+        database_id=TODOS_DATABASE_ID, filter=filter_payload
+    )
+    collect(response.get("results", []))
+
+    while response.get("has_more"):
+        response = notion.databases.query(
+            database_id=TODOS_DATABASE_ID,
+            filter=filter_payload,
+            start_cursor=response["next_cursor"],
+        )
+        collect(response.get("results", []))
+
+    return open_chore_ids
+
+
 def get_tasks_for_this_week(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Filter tasks to only include those that should be assigned this week."""
     weeks_from_start = (
@@ -261,6 +317,15 @@ def main():
 
     tasks_this_week = get_tasks_for_this_week(tasks)
     print(f"{len(tasks_this_week)} task(s) scheduled for this week")
+
+    open_chore_ids = get_open_chore_ids()
+    if open_chore_ids:
+        carried_over = [t for t in tasks_this_week if t[ID] in open_chore_ids]
+        for task in carried_over:
+            print(f"⊘ Skipping {task[NAME]} - still open from a previous week")
+        tasks_this_week = [
+            t for t in tasks_this_week if t[ID] not in open_chore_ids
+        ]
 
     if not tasks_this_week:
         print("No tasks to assign this week.")
