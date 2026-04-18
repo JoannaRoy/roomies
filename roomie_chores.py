@@ -318,29 +318,33 @@ def main():
     tasks_this_week = get_tasks_for_this_week(tasks)
     print(f"{len(tasks_this_week)} task(s) scheduled for this week")
 
-    open_chore_ids = get_open_chore_ids()
-    if open_chore_ids:
-        carried_over = [t for t in tasks_this_week if t[ID] in open_chore_ids]
-        for task in carried_over:
-            print(f"⊘ Skipping {task[NAME]} - still open from a previous week")
-        tasks_this_week = [
-            t for t in tasks_this_week if t[ID] not in open_chore_ids
-        ]
-
     if not tasks_this_week:
         print("No tasks to assign this week.")
+        return
+
+    tasks_assigned = assign_roomies(tasks_this_week, roomies)
+
+    open_chore_ids = get_open_chore_ids()
+    tasks_to_create = []
+    for task in tasks_assigned:
+        if task[ID] in open_chore_ids:
+            print(f"⊘ Skipping {task[NAME]} - still open from a previous week")
+        else:
+            tasks_to_create.append(task)
+
+    if not tasks_to_create:
+        print("No tasks to create this week.")
         return
 
     due_date_str = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
     success_count = 0
-    tasks_assigned = assign_roomies(tasks_this_week, roomies)
-    for task in tasks_assigned:
+    for task in tasks_to_create:
         if create_task(task, due_date_str):
             success_count += 1
 
     print(
-        f"\nCompleted: {success_count}/{len(tasks_this_week)} tasks created successfully"
+        f"\nCompleted: {success_count}/{len(tasks_to_create)} tasks created successfully"
     )
 
 
