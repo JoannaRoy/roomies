@@ -2,7 +2,7 @@ name: Weekly Roomie Chores Automation
 
 on:
   schedule:
-    - cron: '0 22 * * 0'
+    - cron: '59 23 * * 1'
   workflow_dispatch:
 
 jobs:
